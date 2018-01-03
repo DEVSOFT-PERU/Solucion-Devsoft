@@ -1,12 +1,7 @@
 ﻿using Devsoft.Core.Util;
 using Sap.Data.Hana;
-using System;
 using System.Collections.Generic;
-using System.Configuration;
 using System.Data;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Devsoft.Core.Helper
 {
@@ -15,8 +10,8 @@ namespace Devsoft.Core.Helper
     /// </summary>
     /// <remarks>
     /// Autor: Mark Anthony Arroyo Garcia
-    /// Versión: 1.0.0
-    /// Fecha: 20/12/2017
+    /// Versión: 1.6.0
+    /// Fecha: 03/01/2018
     /// </remarks>
     public class HanaDatabaseHelper
     {
@@ -70,12 +65,18 @@ namespace Devsoft.Core.Helper
             , HanaConnection connection
             , CommandType cmdType = CommandType.StoredProcedure
             , HanaParameter parameter = null
-            , List<HanaParameter> parameters = null)
+            , List<HanaParameter> parameters = null
+            , HanaTransaction transaction = null)
         {
             HanaCommand command = new HanaCommand();
             command.Connection = connection;
             command.CommandType = cmdType;
             command.CommandText = commandText;
+
+            if (transaction != null)
+            {
+                command.Transaction = transaction;
+            }
 
             if (parameter != null)
             {
@@ -199,16 +200,29 @@ namespace Devsoft.Core.Helper
         public static void Execute(string commandText
             , HanaParameter parameter = null
             , List<HanaParameter> parameters = null
-            , CommandType type = CommandType.StoredProcedure)
+            , Dictionary<string, object> paramsOutputValue = null
+            , CommandType type = CommandType.StoredProcedure
+            , HanaConnection connection = null
+            , HanaTransaction transaction = null)
         {
-            HanaConnection connection = null;
             HanaCommand command = null;
 
             try
             {
-                connection = OpenConnection();
-                command = PrepareCommand(commandText, connection, type, parameter, parameters);
+                if (connection == null) { connection = OpenConnection(); }
+
+                command = PrepareCommand(commandText, connection, type, parameter, parameters, transaction);
                 command.ExecuteNonQuery();
+                if (parameter != null || parameters != null)
+                {
+                    foreach (HanaParameter x in parameters)
+                    {
+                        if (x.Direction == ParameterDirection.Output)
+                        {
+                            paramsOutputValue.Add(x.ParameterName, command.Parameters[x.ParameterName].Value);
+                        }
+                    }
+                }
             }
             catch (HanaException)
             {
@@ -217,41 +231,20 @@ namespace Devsoft.Core.Helper
             finally
             {
                 CloseCommand(command);
-                CloseConnection(connection);
+                if (transaction == null) { CloseConnection(connection); }
+
             }
         }
 
-        public static void ExecuteOutput(string commandText
-            , List<string> paramsOutput
-            , List<object> paramsOutputValue
-            , HanaParameter parameter = null
-            , List<HanaParameter> parameters = null
-            , CommandType type = CommandType.StoredProcedure)
+        public static void BeginTransaction(ref HanaConnection sqlConnection, ref HanaTransaction sqlTransaction)
         {
-            HanaConnection connection = null;
-            HanaCommand command = null;
-
-            try
-            {
-                connection = OpenConnection();
-                command = PrepareCommand(commandText, connection, type, parameter, parameters);
-                command.ExecuteNonQuery();
-
-                for (var i = 0; i < paramsOutput.Count; i++)
-                {
-                    paramsOutputValue[i] = command.Parameters[paramsOutput[i]].Value;
-                }
-
-            }
-            catch (HanaException)
-            {
-                throw;
-            }
-            finally
-            {
-                CloseCommand(command);
-                CloseConnection(connection);
-            }
+            sqlConnection = OpenConnection();
+            sqlTransaction = sqlConnection.BeginTransaction();
+        }
+        public static void EndTransaction(ref HanaConnection sqlConnection, ref HanaTransaction sqlTransaction)
+        {
+            if (sqlTransaction != null) { sqlTransaction.Dispose(); }
+            CloseConnection(sqlConnection);
         }
 
         public static DataSet GetDataSet(string commandText
@@ -284,7 +277,5 @@ namespace Devsoft.Core.Helper
 
             return ds;
         }
-
     }
-
 }

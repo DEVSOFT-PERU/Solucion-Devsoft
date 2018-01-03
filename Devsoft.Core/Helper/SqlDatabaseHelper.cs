@@ -1,6 +1,5 @@
 ﻿using Devsoft.Core.Util;
 using System.Collections.Generic;
-using System.Configuration;
 using System.Data;
 using System.Data.SqlClient;
 
@@ -11,8 +10,15 @@ namespace Devsoft.Core.Helper
     /// </summary>
     /// <remarks>
     /// Autor: Mark Anthony Arroyo Garcia
-    /// Versión: 1.5.0
-    /// Fecha: 31/12/2017
+    /// Versión: 1.6.0
+    /// Fecha: 03/01/2018
+    /// REPLACE:    SqlDataReader   -   HanaDataReader
+    ///             SqlConnection   -   HanaConnection
+    ///             SqlCommand      -   HanaCommand
+    ///             SqlParameter    -   HanaParameter
+    ///             SqlTransaction  -   HanaTransaction
+    ///             SqlDataAdapter  -   HanaDataAdapter
+    ///             SqlException    -   HanaException
     /// </remarks>
     public class SqlDatabaseHelper
     {
@@ -54,16 +60,30 @@ namespace Devsoft.Core.Helper
             }
         }
 
+        private static void CloseDataAdapter(SqlDataAdapter dataAdapter)
+        {
+            if (dataAdapter != null)
+            {
+                dataAdapter.Dispose();
+            }
+        }
+
         private static SqlCommand PrepareCommand(string commandText
             , SqlConnection connection
             , CommandType cmdType = CommandType.StoredProcedure
             , SqlParameter parameter = null
-            , List<SqlParameter> parameters = null)
+            , List<SqlParameter> parameters = null
+            , SqlTransaction transaction = null)
         {
             SqlCommand command = new SqlCommand();
             command.Connection = connection;
             command.CommandType = cmdType;
             command.CommandText = commandText;
+
+            if (transaction != null)
+            {
+                command.Transaction = transaction;
+            }
 
             if (parameter != null)
             {
@@ -187,16 +207,69 @@ namespace Devsoft.Core.Helper
         public static void Execute(string commandText
             , SqlParameter parameter = null
             , List<SqlParameter> parameters = null
+            , Dictionary<string, object> paramsOutputValue = null
+            , CommandType type = CommandType.StoredProcedure
+            , SqlConnection connection = null
+            , SqlTransaction transaction = null)
+        {
+            SqlCommand command = null;
+
+            try
+            {
+                if (connection == null) { connection = OpenConnection(); }
+
+                command = PrepareCommand(commandText, connection, type, parameter, parameters, transaction);
+                command.ExecuteNonQuery();
+                if (parameter != null || parameters != null)
+                {
+                    foreach (SqlParameter x in parameters)
+                    {
+                        if (x.Direction == ParameterDirection.Output)
+                        {
+                            paramsOutputValue.Add(x.ParameterName, command.Parameters[x.ParameterName].Value);
+                        }
+                    }
+                }
+            }
+            catch (SqlException)
+            {
+                throw;
+            }
+            finally
+            {
+                CloseCommand(command);
+                if (transaction == null) { CloseConnection(connection); }
+
+            }
+        }
+
+        public static void BeginTransaction(ref SqlConnection sqlConnection, ref SqlTransaction sqlTransaction)
+        {
+            sqlConnection = OpenConnection();
+            sqlTransaction = sqlConnection.BeginTransaction();
+        }
+        public static void EndTransaction(ref SqlConnection sqlConnection, ref SqlTransaction sqlTransaction)
+        {
+            if (sqlTransaction != null) { sqlTransaction.Dispose(); }
+            CloseConnection(sqlConnection);
+        }
+
+        public static DataSet GetDataSet(string commandText
+            , SqlParameter parameter = null
+            , List<SqlParameter> parameters = null
             , CommandType type = CommandType.StoredProcedure)
         {
             SqlConnection connection = null;
             SqlCommand command = null;
+            SqlDataAdapter da = new SqlDataAdapter();
 
+            DataSet ds = new DataSet();
             try
             {
                 connection = OpenConnection();
                 command = PrepareCommand(commandText, connection, type, parameter, parameters);
-                command.ExecuteNonQuery();
+                da.SelectCommand = command;
+                da.Fill(ds);
             }
             catch (SqlException)
             {
@@ -204,42 +277,12 @@ namespace Devsoft.Core.Helper
             }
             finally
             {
+                CloseDataAdapter(da);
                 CloseCommand(command);
                 CloseConnection(connection);
             }
-        }
 
-        public static void ExecuteOutput(string commandText
-             , List<string> paramsOutput
-             , List<object> paramsOutputValue
-             , SqlParameter parameter = null
-             , List<SqlParameter> parameters = null
-             , CommandType type = CommandType.StoredProcedure)
-        {
-            SqlConnection connection = null;
-            SqlCommand command = null;
-
-            try
-            {
-                connection = OpenConnection();
-                command = PrepareCommand(commandText, connection, type, parameter, parameters);
-                command.ExecuteNonQuery();
-
-                for (var i = 0; i < paramsOutput.Count; i++)
-                {
-                    paramsOutputValue[i] = command.Parameters[paramsOutput[i]].Value;
-                }
-
-            }
-            catch (SqlException)
-            {
-                throw;
-            }
-            finally
-            {
-                CloseCommand(command);
-                CloseConnection(connection);
-            }
+            return ds;
         }
     }
 }
